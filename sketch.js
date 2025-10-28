@@ -1,9 +1,11 @@
-// --- Stereo-swapper ---
+// --- Stereo-swapper (mobile-safe) ---
 // Upload a stereo pair image → automatically swaps left/right halves
+// Uses Blob URLs instead of base64 and downsizes huge camera images on mobile.
 
 let inputImg = null;
 let outputImgElement;
 let dropZone;
+let currentBlobUrl = null;
 
 function setup() {
   noCanvas();
@@ -68,6 +70,7 @@ function createDropZone(labelText, callback) {
 
   let fileInput = createFileInput((file) => callback(file));
   fileInput.parent(container);
+  fileInput.elt.accept = 'image/*'; // nicer on mobile (camera/gallery)
   fileInput.elt.style.display = 'none';
 
   container.mousePressed(() => fileInput.elt.click());
@@ -84,11 +87,19 @@ function createDropZone(labelText, callback) {
 // --- Handle uploaded image ---
 function gotImageFile(file) {
   if (file && file.type === 'image') {
-    loadImage(file.data, (img) => {
-      inputImg = img;
-      displayImageInZone(dropZone, img);
-      swapStereo(); // 👈 automatically generate swapped version
+    loadImage(file.data, async (img) => {
+      // Downscale monster camera images to keep mobile happy
+      const safeImg = await downscaleIfHuge(img, 5_000_000); // ~5MP cap
+
+      inputImg = safeImg;
+      displayImageInZone(dropZone, safeImg);
+
+      // Automatically swap after load
+      await swapStereo();
       console.log('✅ Image loaded and swapped');
+    }, (err) => {
+      console.error('Image load error:', err);
+      alert('Could not load that image.');
     });
   }
 }
@@ -96,25 +107,86 @@ function gotImageFile(file) {
 // --- Display thumbnail in drop zone ---
 function displayImageInZone(zone, img) {
   zone.container.html('');
-  createImg(img.canvas.toDataURL(), '')
-    .style('width', '100%')
-    .style('height', '100%')
-    .style('object-fit', 'cover')
-    .parent(zone.container);
+  // Use blob for the preview too, to avoid huge base64 strings on mobile
+  graphicsToBlobURL(imageToGraphics(img)).then(url => {
+    const thumb = createImg(url, '');
+    thumb.style('width', '100%')
+      .style('height', '100%')
+      .style('object-fit', 'cover')
+      .parent(zone.container);
+  });
 }
 
-// --- Core: swap left/right halves ---
-function swapStereo() {
+// --- Core: swap left/right halves (blob-based output) ---
+async function swapStereo() {
   if (!inputImg) return;
 
   let w = inputImg.width;
   let h = inputImg.height;
-  let half = Math.floor(w / 2);
 
+  // If odd width, drop the center pixel to avoid a seam
+  if (w % 2 === 1) w = w - 1;
+
+  const half = Math.floor(w / 2);
+
+  // Draw into a p5.Graphics with safe pixel density
   let swapped = createGraphics(w, h);
-  swapped.image(inputImg, 0, 0, half, h, half, 0, half, h); // right → left
-  swapped.image(inputImg, half, 0, half, h, 0, 0, half, h); // left → right
+  swapped.pixelDensity(1);
 
-  outputImgElement.attribute('src', swapped.canvas.toDataURL());
+  // right → left
+  swapped.image(inputImg, 0, 0, half, h, half, 0, half, h);
+  // left → right
+  swapped.image(inputImg, half, 0, half, h, 0, 0, half, h);
+
+  // Convert to Blob URL (mobile-friendly)
+  const url = await graphicsToBlobURL(swapped);
+
+  // Revoke previous blob to avoid leaks
+  if (currentBlobUrl) URL.revokeObjectURL(currentBlobUrl);
+  currentBlobUrl = url;
+
+  // Set output
+  outputImgElement.attribute('src', url);
+  // Optional: hint actual size (helps Chrome mobile layout sometimes)
+  outputImgElement.attribute('width', w);
+  outputImgElement.attribute('height', h);
   outputImgElement.show();
+}
+
+// --- Helpers ---
+
+// Downscale very large images to a target pixel count while preserving aspect
+async function downscaleIfHuge(p5img, maxPixels) {
+  const total = p5img.width * p5img.height;
+  if (total <= maxPixels) return p5img;
+
+  const scale = Math.sqrt(maxPixels / total);
+  const newW = Math.max(1, Math.floor(p5img.width * scale));
+  const newH = Math.max(1, Math.floor(p5img.height * scale));
+
+  const g = createGraphics(newW, newH);
+  g.pixelDensity(1);
+  g.image(p5img, 0, 0, newW, newH);
+  // Return as p5.Image so we can reuse code that expects an image
+  const down = g.get();
+  g.remove(); // free the graphics buffer
+  return down;
+}
+
+// Convert a p5.Image to p5.Graphics (1:1)
+function imageToGraphics(img) {
+  const g = createGraphics(img.width, img.height);
+  g.pixelDensity(1);
+  g.image(img, 0, 0);
+  return g;
+}
+
+// Convert p5.Graphics to a Blob URL (PNG)
+function graphicsToBlobURL(gfx) {
+  return new Promise((resolve) => {
+    // Use the underlying canvas' toBlob for memory-friendly output
+    gfx.elt.toBlob((blob) => {
+      resolve(URL.createObjectURL(blob));
+    }, 'image/png');
+  });
 }
