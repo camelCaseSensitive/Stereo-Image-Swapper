@@ -1,9 +1,9 @@
 // --- Stereo-swapper ---
-// Upload a single stereo pair image → swaps left/right halves
+// Upload a stereo pair image → automatically swaps left/right halves
 
 let inputImg = null;
 let outputImgElement;
-let dropZone, swapButton;
+let dropZone;
 
 function setup() {
   noCanvas();
@@ -21,16 +21,6 @@ function setup() {
 
   dropZone = createDropZone('Drop Stereo Image Here', gotImageFile);
   dropContainer.child(dropZone.container);
-
-  // --- Swap button ---
-  swapButton = createButton('Swap Images');
-  swapButton.style('display', 'block')
-    .style('margin', '0 auto 20px auto')
-    .style('padding', '10px 20px')
-    .style('font-size', '16px')
-    .style('cursor', 'pointer')
-    .attribute('disabled', true);
-  swapButton.mousePressed(swapStereo);
 
   // --- Output display area ---
   createElement('h3', 'Swapped Image')
@@ -97,8 +87,8 @@ function gotImageFile(file) {
     loadImage(file.data, (img) => {
       inputImg = img;
       displayImageInZone(dropZone, img);
-      swapButton.removeAttribute('disabled');
-      console.log('✅ Image loaded');
+      swapStereo(); // 👈 automatically generate swapped version
+      console.log('✅ Image loaded and swapped');
     });
   }
 }
@@ -122,8 +112,8 @@ function swapStereo() {
   let half = Math.floor(w / 2);
 
   let swapped = createGraphics(w, h);
-  swapped.image(inputImg, 0, 0, half, h, half, 0, half, h);        // right → left
-  swapped.image(inputImg, half, 0, half, h, 0, 0, half, h);        // left → right
+  swapped.image(inputImg, 0, 0, half, h, half, 0, half, h); // right → left
+  swapped.image(inputImg, half, 0, half, h, 0, 0, half, h); // left → right
 
   outputImgElement.attribute('src', swapped.canvas.toDataURL());
   outputImgElement.show();
